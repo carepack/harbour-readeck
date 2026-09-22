@@ -78,6 +78,34 @@ public:
     Q_INVOKABLE void loadArticle(const QString &bookmarkId);
     Q_INVOKABLE void loadLabels();
 
+    // Renders the already-loaded article HTML to a PDF in the given
+    // directory (chosen by the user in PdfLocationDialog.qml, always
+    // one of downloadsPath()/documentsPath() or a subfolder of one --
+    // the only trees this app's Sailjail permissions grant write access
+    // to) via QTextDocument + QPdfWriter (both plain QtGui -- no
+    // QtPrintSupport, which isn't part of this Sailfish OS target's Qt
+    // build at all). Synchronous: local file I/O and CPU-bound layout
+    // only, no network round-trip, so there's nothing to usefully do
+    // asynchronously. Returns the saved file's path, or an empty string
+    // on failure (with the reason left in lastError, same as every
+    // other failure path).
+    Q_INVOKABLE QString exportArticlePdf(const QString &title, const QString &html, const QString &directory);
+
+    // Roots offered by PdfLocationDialog.qml for browsing/export -- the
+    // XDG user directories the "UserDirs" Sailjail permission in
+    // harbour-readeck.desktop grants read/write access to. There is no
+    // permission for arbitrary access to the rest of $HOME (Sailjail
+    // whitelists specific trees only -- see
+    // /etc/sailjail/permissions/UserDirs.permission on-device, which is
+    // exactly these six), so these are the full set of folders the app
+    // can actually browse/save into under the sandbox.
+    Q_INVOKABLE QString downloadsPath() const;
+    Q_INVOKABLE QString documentsPath() const;
+    Q_INVOKABLE QString picturesPath() const;
+    Q_INVOKABLE QString videosPath() const;
+    Q_INVOKABLE QString musicPath() const;
+    Q_INVOKABLE QString publicPath() const;
+
     // html: when non-empty, submitted as the page's content directly
     // (multipart upload) instead of letting the server fetch the URL
     // itself -- useful for paywalled pages the server's own fetcher

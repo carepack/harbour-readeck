@@ -121,6 +121,10 @@
         <translation>Lesezeichen wird gelöscht</translation>
     </message>
     <message>
+        <source>Export as PDF</source>
+        <translation>Als PDF exportieren</translation>
+    </message>
+    <message>
         <source>Mark as read / archive</source>
         <translation>Als gelesen markieren / archivieren</translation>
     </message>
@@ -137,6 +141,10 @@
         <translation>Aus Favoriten entfernen</translation>
     </message>
     <message>
+        <source>Saved to %1</source>
+        <translation>Gespeichert unter %1</translation>
+    </message>
+    <message>
         <source>Unread</source>
         <translation>Ungelesen</translation>
     </message>
@@ -148,12 +156,16 @@
         <translation>Artikelinfo</translation>
     </message>
     <message>
+        <source>Copy link</source>
+        <translation>Link kopieren</translation>
+    </message>
+    <message>
         <source>Details</source>
         <translation>Details</translation>
     </message>
     <message>
-        <source>Further links in this article</source>
-        <translation>Weiterführende Links in diesem Artikel</translation>
+        <source>Links</source>
+        <translation>Links</translation>
     </message>
     <message>
         <source>No further links found in this article</source>
@@ -258,6 +270,64 @@
     </message>
 </context>
 <context>
+    <name>ImageViewerPage</name>
+    <message>
+        <source>Open in browser</source>
+        <translation>Im Browser öffnen</translation>
+    </message>
+    <message>
+        <source>Could not load the image</source>
+        <translation>Bild konnte nicht geladen werden</translation>
+    </message>
+</context>
+<context>
+    <name>PdfLocationDialog</name>
+    <message>
+        <source>Save location</source>
+        <translation>Speicherort</translation>
+    </message>
+    <message>
+        <source>Save here</source>
+        <translation>Hier speichern</translation>
+    </message>
+    <message>
+        <source>Home</source>
+        <translation>Start</translation>
+    </message>
+    <message>
+        <source>Downloads</source>
+        <translation>Downloads</translation>
+    </message>
+    <message>
+        <source>Documents</source>
+        <translation>Dokumente</translation>
+    </message>
+    <message>
+        <source>Pictures</source>
+        <translation>Bilder</translation>
+    </message>
+    <message>
+        <source>Videos</source>
+        <translation>Videos</translation>
+    </message>
+    <message>
+        <source>Music</source>
+        <translation>Musik</translation>
+    </message>
+    <message>
+        <source>Public</source>
+        <translation>Öffentlich</translation>
+    </message>
+    <message>
+        <source>Up one level</source>
+        <translation>Eine Ebene nach oben</translation>
+    </message>
+    <message>
+        <source>No subfolders here</source>
+        <translation>Keine Unterordner vorhanden</translation>
+    </message>
+</context>
+<context>
     <name>LoginPage</name>
     <message>
         <source>API token</source>
@@ -345,6 +415,14 @@
 </context>
 <context>
     <name>ReadeckClient</name>
+    <message>
+        <source>article</source>
+        <translation>Artikel</translation>
+    </message>
+    <message>
+        <source>Could not access the selected folder</source>
+        <translation>Zugriff auf den ausgewählten Ordner nicht möglich</translation>
+    </message>
     <message>
         <source>Login request expired. Please try again.</source>
         <translation>Anmeldeanfrage abgelaufen. Bitte erneut versuchen.</translation>

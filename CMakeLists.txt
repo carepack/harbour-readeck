@@ -25,6 +25,7 @@ target_include_directories(harbour-readeck PRIVATE
 )
 target_link_libraries(harbour-readeck
     Qt5::Quick
+    Qt5::Gui
     Qt5::Network
     Qt5::DBus
     ${SAILFISH_LDFLAGS}
@@ -81,6 +82,8 @@ add_custom_target(distfiles
         qml/pages/BookmarksPage.qml
         qml/pages/BookmarkDetailPage.qml
         qml/pages/BookmarkInfoPage.qml
+        qml/pages/PdfLocationDialog.qml
+        qml/pages/ImageViewerPage.qml
         qml/pages/AddBookmarkPage.qml
         qml/pages/CaptureContentPage.qml
         qml/pages/SettingsPage.qml

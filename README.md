@@ -7,12 +7,20 @@ application. Native QML + C++ app built with `Sailfish.Silica`.
 - Sign in via Readeck's browser-based OAuth2 device-code flow (Readeck
   0.21+), with a manual personal-API-token fallback for older servers
 - Browse bookmarks with **Unread / Favorites / Archive / All** filters,
-  full-text search, pull-down refresh and infinite scroll
+  full-text search, pull-down refresh and infinite scroll — swipe
+  left/right anywhere in the list to move between filters, carousel-style
 - Native reader view — article HTML rendered directly (no WebView), with
   code blocks and long inline code runs pulled into their own
   horizontally-scrollable monospace boxes so they never overflow the
   screen, and images scaled to fit
+- Tap an image in an article to open it full-screen with pinch-to-zoom and
+  double-tap-to-zoom
 - Toggle favorite / archive, delete, open the original URL in the browser
+- Export an article as a formatted, paginated PDF (A4), with images
+  embedded and a save-location picker covering Downloads/Documents/
+  Pictures/Videos/Music/Public
+- Article info page lists the original source and every link found in the
+  article body; long-press any of them to copy the link
 - Save a new bookmark via the pulley menu, via Sailfish's share sheet from
   any other app, or by capturing a page's rendered content through an
   embedded browser (useful for pages that need a login or JS rendering
@@ -26,7 +34,8 @@ application. Native QML + C++ app built with `Sailfish.Silica`.
 ```
 src/                  C++ backend (ReadeckClient REST client, BookmarkListModel, ShareReceiver)
 qml/pages/            LoginPage, BookmarksPage, BookmarkDetailPage, BookmarkInfoPage,
-                       AddBookmarkPage, CaptureContentPage, SettingsPage
+                       ImageViewerPage, PdfLocationDialog, AddBookmarkPage,
+                       CaptureContentPage, SettingsPage
 qml/components/       BookmarkDelegate
 qml/cover/            CoverPage
 rpm/                  RPM spec + changelog
@@ -79,9 +88,7 @@ push via [CODeRUS/github-sfos-build](https://github.com/CODeRUS/github-sfos-buil
   sandbox) — plaintext, same trust model most FOSS Readeck clients use.
   Sailfish Secrets-backed storage would be a good follow-up.
 
-## Before publishing
+## Before publishing to Harbour/Chum
 
-- Update `URL`/`Repo`/`Links` in `rpm/harbour-readeck.spec` to the final
-  public repo location.
 - Rename `rpm/harbour-readeck.changes.in` → `harbour-readeck.changes` (or
-  wire up `harbour-readeck.changes.run`) before submitting to Harbour/Chum.
+  wire up `harbour-readeck.changes.run`).

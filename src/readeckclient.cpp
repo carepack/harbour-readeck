@@ -9,6 +9,16 @@
 #include <QHttpMultiPart>
 #include <QUuid>
 #include <QDateTime>
+#include <QTextDocument>
+#include <QPdfWriter>
+#include <QPageSize>
+#include <QPageLayout>
+#include <QStandardPaths>
+#include <QDir>
+#include <QFileInfo>
+#include <QRegularExpression>
+#include <QEventLoop>
+#include <QImage>
 
 namespace {
 // Sailfish OS ships Qt 5.6, which predates QNetworkAccessManager::sendCustomRequest()
@@ -28,6 +38,107 @@ protected:
         return QNetworkAccessManager::createRequest(op, request, outgoingData);
     }
 };
+
+// Plain QTextDocument::loadResource() only ever resolves local/relative
+// resources (its own resources() cache, or file:// paths under
+// baseUrl()) -- it never fetches a remote http(s) URL on its own, so
+// without this override every <img src="https://..."> in an exported
+// article's HTML would silently render as nothing at all in the PDF.
+// This does a small, synchronous (nested QEventLoop) GET per image,
+// which is deliberately a blocking network round-trip on the calling
+// thread: exportArticlePdf() below is itself already a synchronous
+// Q_INVOKABLE, and articles realistically have at most a handful of
+// images, so a brief pause during export (same UX expectation as any
+// other export/share action) is preferable to the complexity of a
+// fully async PDF pipeline. Uses its own QNetworkAccessManager rather
+// than ReadeckClient's shared one, so this blocking wait can never
+// interact with the app's other, async, in-flight requests.
+class PdfImageResourceDocument : public QTextDocument
+{
+public:
+    explicit PdfImageResourceDocument(QObject *parent = nullptr) : QTextDocument(parent) {}
+
+protected:
+    QVariant loadResource(int type, const QUrl &url) override
+    {
+        if (type == QTextDocument::ImageResource
+                && (url.scheme() == QLatin1String("http") || url.scheme() == QLatin1String("https"))) {
+            QNetworkAccessManager manager;
+            QNetworkReply *reply = manager.get(QNetworkRequest(url));
+            QEventLoop loop;
+            QObject::connect(reply, &QNetworkReply::finished, &loop, &QEventLoop::quit);
+            loop.exec();
+
+            QImage image;
+            if (reply->error() == QNetworkReply::NoError) {
+                image.loadFromData(reply->readAll());
+            }
+            reply->deleteLater();
+
+            if (!image.isNull()) {
+                addResource(QTextDocument::ImageResource, url, image);
+                return image;
+            }
+            return QVariant();
+        }
+        return QTextDocument::loadResource(type, url);
+    }
+};
+
+// Same "cap explicit width/height, drop the rest" approach as the QML
+// reader view's own fixImages() (BookmarkDetailPage.qml) -- QTextDocument
+// is the same underlying Qt rich-text/HTML engine QML's Text.RichText
+// uses, and shares the same limitation: it does not honor a CSS
+// "max-width" on <img>, only an explicit "width" attribute. Manual
+// string surgery instead of QRegularExpression's replace(), since this
+// Qt version's QString::replace(QRegularExpression, ...) has no
+// callback-function overload (only fixed replacement text).
+//
+// A genuine cap, not a forced fixed width: an existing width attribute
+// smaller than maxWidth is kept as-is, only a missing or too-large one
+// is replaced. Confirmed live this distinction matters -- unconditionally
+// forcing every image to the full page width blew a small (100x100)
+// source image up to nearly the whole page and made it pixelated, while
+// real article photos (typically already sized close to their natural
+// display width in the source HTML) mostly just need the "too large"
+// half of this to avoid overflowing the page.
+QString capImageWidths(const QString &html, int maxWidth)
+{
+    static const QRegularExpression imgTagRe(QStringLiteral("<img[^>]*>"),
+                                               QRegularExpression::CaseInsensitiveOption);
+    static const QRegularExpression widthAttrRe(QStringLiteral("\\swidth\\s*=\\s*[\"']?(\\d+)"),
+                                                  QRegularExpression::CaseInsensitiveOption);
+    QString result;
+    result.reserve(html.size());
+    int lastEnd = 0;
+    QRegularExpressionMatchIterator it = imgTagRe.globalMatch(html);
+    while (it.hasNext()) {
+        const QRegularExpressionMatch m = it.next();
+        result += html.mid(lastEnd, m.capturedStart() - lastEnd);
+
+        QString tag = m.captured(0);
+
+        int existingWidth = 0;
+        const QRegularExpressionMatch widthMatch = widthAttrRe.match(tag);
+        if (widthMatch.hasMatch()) {
+            existingWidth = widthMatch.captured(1).toInt();
+        }
+        const int newWidth = (existingWidth > 0 && existingWidth < maxWidth) ? existingWidth : maxWidth;
+
+        tag.remove(QRegularExpression(QStringLiteral("\\s(width|height)\\s*=\\s*(\"[^\"]*\"|'[^']*')"),
+                                       QRegularExpression::CaseInsensitiveOption));
+        tag.chop(1); // drop the trailing '>'
+        if (tag.endsWith(QLatin1Char('/'))) {
+            tag.chop(1); // drop a self-closing tag's trailing '/' too
+        }
+        tag += QStringLiteral(" width=\"%1\"/>").arg(newWidth);
+
+        result += tag;
+        lastEnd = m.capturedEnd();
+    }
+    result += html.mid(lastEnd);
+    return result;
+}
 }
 
 ReadeckClient::ReadeckClient(QObject *parent)
@@ -509,6 +620,125 @@ void ReadeckClient::loadArticle(const QString &bookmarkId)
         }
         reply->deleteLater();
     });
+}
+
+QString ReadeckClient::exportArticlePdf(const QString &title, const QString &html, const QString &directory)
+{
+    QDir dir(directory);
+    if (!dir.exists() && !dir.mkpath(QStringLiteral("."))) {
+        setLastError(tr("Could not access the selected folder"));
+        return QString();
+    }
+
+    // Filesystem-unsafe characters replaced with "-"; an empty/all-unsafe
+    // title (e.g. one that was just a URL full of slashes) falls back to
+    // a fixed name rather than producing an unusable empty filename.
+    QString base = title.trimmed();
+    base.replace(QRegularExpression(QStringLiteral("[\\\\/:*?\"<>|]")), QStringLiteral("-"));
+    base = base.simplified();
+    if (base.isEmpty()) {
+        base = tr("article");
+    }
+
+    QString fileName = base + QStringLiteral(".pdf");
+    QString filePath = dir.filePath(fileName);
+    int suffix = 1;
+    while (QFileInfo::exists(filePath)) {
+        fileName = base + QStringLiteral(" (%1).pdf").arg(++suffix);
+        filePath = dir.filePath(fileName);
+    }
+
+    QPdfWriter writer(filePath);
+    writer.setPageSize(QPageSize(QPageSize::A4));
+    writer.setPageMargins(QMarginsF(15, 15, 15, 15), QPageLayout::Millimeter);
+    // QPdfWriter defaults to a 1200 DPI resolution, so
+    // pageLayout().paintRectPixels(writer.resolution()) below returns
+    // page dimensions in the thousands of "pixels" -- but QTextDocument
+    // interprets CSS font sizes (e.g. "11pt") using its own fixed,
+    // DPI-independent scale, completely unrelated to whatever huge
+    // pixel count the page size happens to be in. Confirmed live via a
+    // rendered test PDF: with the 1200 DPI default, headline/body text
+    // came out microscopic relative to the page, and capping an <img>'s
+    // width to that same huge pixel count blew a small source image up
+    // to nearly the full page, pixelated. Explicitly using a low,
+    // "device independent pixel"-like resolution keeps both font
+    // metrics and the page's own pixel coordinate space on the same
+    // scale, so text and image sizing come out proportionate again.
+    writer.setResolution(96);
+    // Matches the writer's actual content area (page size minus margins,
+    // converted from millimeters to the layout's own point-based units)
+    // so QTextDocument paginates for the real printable width instead of
+    // its own arbitrary default, which would make every page's content
+    // clipped or oddly re-flowed relative to what QPdfWriter renders.
+    const QSizeF pageSizePoints = writer.pageLayout().paintRectPixels(writer.resolution()).size();
+
+    // The raw article HTML from Readeck's API carries no styling of its
+    // own (that's supplied by this app's QML reader view / Readeck's
+    // own web reader, neither of which apply here), so handing it to
+    // QTextDocument as-is renders as unstyled black-on-white text with
+    // no typographic hierarchy at all. Wrapping it in a minimal,
+    // deliberately conservative CSS shell -- only using properties
+    // QTextDocument's small rich-text CSS subset is known to actually
+    // honor (font-family/size, color, margins, background-color;
+    // notably NOT things like border-left, which QTextDocument mostly
+    // only supports on <table>/<td>) -- gets it much closer to how the
+    // article actually reads in-app or on the original page, adapted
+    // to the page's own printable width.
+    const QString styledHtml = QStringLiteral(
+        "<html><head><style>"
+        "body { font-family: sans-serif; font-size: 11pt; line-height: 145%; color: #202020; }"
+        "h1 { font-size: 17pt; margin-bottom: 4pt; }"
+        "h2 { font-size: 14pt; margin-top: 14pt; }"
+        "h3, h4 { font-size: 12pt; margin-top: 12pt; }"
+        "a { color: #0a5aa8; }"
+        "blockquote { margin-left: 12pt; color: #4a4a4a; font-style: italic; }"
+        "pre, code { font-family: monospace; font-size: 9pt; background-color: #eeeeee; }"
+        "pre { padding: 6pt; }"
+        "</style></head><body><h1>%1</h1>%2</body></html>")
+            .arg(title.toHtmlEscaped(), capImageWidths(html, int(pageSizePoints.width())));
+
+    PdfImageResourceDocument document;
+    document.setHtml(styledHtml);
+    document.setPageSize(pageSizePoints);
+
+    document.print(&writer);
+
+    return filePath;
+}
+
+QString ReadeckClient::downloadsPath() const
+{
+    return QStandardPaths::writableLocation(QStandardPaths::DownloadLocation);
+}
+
+QString ReadeckClient::documentsPath() const
+{
+    return QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation);
+}
+
+QString ReadeckClient::picturesPath() const
+{
+    return QStandardPaths::writableLocation(QStandardPaths::PicturesLocation);
+}
+
+QString ReadeckClient::videosPath() const
+{
+    return QStandardPaths::writableLocation(QStandardPaths::MoviesLocation);
+}
+
+QString ReadeckClient::musicPath() const
+{
+    return QStandardPaths::writableLocation(QStandardPaths::MusicLocation);
+}
+
+QString ReadeckClient::publicPath() const
+{
+    // QStandardPaths::PublicShareLocation isn't in this Qt build's enum
+    // at all (checked qstandardpaths.h directly), so this is built by
+    // hand -- matching exactly what
+    // /etc/sailjail/permissions/PublicDir.permission itself creates and
+    // whitelists on-device ("mkdir ${HOME}/Public").
+    return QStandardPaths::writableLocation(QStandardPaths::HomeLocation) + QStringLiteral("/Public");
 }
 
 void ReadeckClient::loadLabels()

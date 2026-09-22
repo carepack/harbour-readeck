@@ -15,6 +15,19 @@ Page {
     readonly property int readingTime: sourcePage ? sourcePage.initialReadingTime : 0
     readonly property var links: sourcePage ? extractLinks(sourcePage.articleHtml) : []
 
+    // A flat list combining the original source and every further link,
+    // so both can share one SilicaListView + delegate.
+    readonly property var listItems: {
+        var items = []
+        if (originalUrl) {
+            items.push({ kind: "source", label: qsTr("Original source"), url: originalUrl })
+        }
+        for (var i = 0; i < links.length; i++) {
+            items.push({ kind: "link", label: links[i].label, url: links[i].url })
+        }
+        return items
+    }
+
     function stripTags(html) {
         var text = html.replace(/<[^>]*>/g, "")
         text = text.replace(/&nbsp;/g, " ")
@@ -45,13 +58,13 @@ Page {
         return result
     }
 
-    SilicaFlickable {
+    SilicaListView {
+        id: listView
         anchors.fill: parent
-        contentHeight: column.height
+        model: listItems
 
-        Column {
-            id: column
-            width: page.width
+        header: Column {
+            width: listView.width
             spacing: Theme.paddingLarge
 
             PageHeader {
@@ -75,128 +88,91 @@ Page {
                 value: readingTime > 0 ? qsTr("%n minute(s)", "", readingTime) : qsTr("Unknown")
             }
 
-            // The source this article was saved from -- visually its own,
-            // distinct kind of row (a website glyph, no highlight color)
-            // so it doesn't read as just one more entry in the "further
-            // links" list below it.
-            BackgroundItem {
-                width: parent.width
-                height: sourceRow.height + 2 * Theme.paddingMedium
-                visible: !!originalUrl
-                onClicked: Qt.openUrlExternally(originalUrl)
-
-                Row {
-                    id: sourceRow
-                    x: Theme.horizontalPageMargin
-                    width: parent.width - 2 * Theme.horizontalPageMargin
-                    anchors.verticalCenter: parent.verticalCenter
-                    spacing: Theme.paddingMedium
-
-                    Icon {
-                        source: "image://theme/icon-m-website"
-                        width: Theme.iconSizeSmall
-                        height: Theme.iconSizeSmall
-                        anchors.verticalCenter: parent.verticalCenter
-                    }
-
-                    Column {
-                        width: parent.width - Theme.iconSizeSmall - Theme.paddingMedium
-                        anchors.verticalCenter: parent.verticalCenter
-
-                        Label {
-                            width: parent.width
-                            text: qsTr("Original source")
-                            font.pixelSize: Theme.fontSizeExtraSmall
-                            color: Theme.secondaryColor
-                        }
-                        Label {
-                            width: parent.width
-                            text: originalUrl
-                            truncationMode: TruncationMode.Fade
-                            color: Theme.primaryColor
-                        }
-                    }
-                }
-            }
-
             SectionHeader {
-                //: Links found within the article body, as opposed to the single "original source" link above
-                text: qsTr("Further links in this article")
-                visible: links.length > 0
+                //: Header above the original-source row and any links found within the article body
+                text: qsTr("Links")
+                visible: listItems.length > 0
                 horizontalAlignment: Text.AlignHCenter
             }
+        }
 
-            Column {
-                width: parent.width
-                visible: links.length > 0
+        delegate: ListItem {
+            id: linkItem
+            width: listView.width
+            contentHeight: linkRow.height + 2 * Theme.paddingMedium
+            onClicked: Qt.openUrlExternally(modelData.url)
 
-                Repeater {
-                    model: links
-                    delegate: BackgroundItem {
+            menu: ContextMenu {
+                MenuItem {
+                    text: qsTr("Copy link")
+                    onClicked: Clipboard.text = modelData.url
+                }
+            }
+
+            Row {
+                id: linkRow
+                x: Theme.horizontalPageMargin
+                anchors.verticalCenter: parent.verticalCenter
+                width: parent.width - 2 * Theme.horizontalPageMargin
+                spacing: Theme.paddingMedium
+
+                Icon {
+                    source: modelData.kind === "source" ? "image://theme/icon-m-website" : "image://theme/icon-m-link"
+                    width: Theme.iconSizeSmall
+                    height: Theme.iconSizeSmall
+                    anchors.verticalCenter: parent.verticalCenter
+                }
+
+                Column {
+                    width: parent.width - Theme.iconSizeSmall - Theme.paddingMedium
+                    anchors.verticalCenter: parent.verticalCenter
+
+                    Label {
                         width: parent.width
-                        height: linkRow.height + 2 * Theme.paddingMedium
-                        onClicked: Qt.openUrlExternally(modelData.url)
-
-                        Row {
-                            id: linkRow
-                            x: Theme.horizontalPageMargin
-                            width: parent.width - 2 * Theme.horizontalPageMargin
-                            anchors.verticalCenter: parent.verticalCenter
-                            spacing: Theme.paddingMedium
-
-                            Icon {
-                                source: "image://theme/icon-m-link"
-                                width: Theme.iconSizeSmall
-                                height: Theme.iconSizeSmall
-                                anchors.verticalCenter: parent.verticalCenter
-                            }
-
-                            Column {
-                                width: parent.width - Theme.iconSizeSmall - Theme.paddingMedium
-                                anchors.verticalCenter: parent.verticalCenter
-
-                                Label {
-                                    width: parent.width
-                                    text: modelData.label
-                                    color: Theme.highlightColor
-                                    truncationMode: TruncationMode.Fade
-                                }
-                                Label {
-                                    width: parent.width
-                                    text: modelData.url
-                                    font.pixelSize: Theme.fontSizeExtraSmall
-                                    color: Theme.secondaryColor
-                                    truncationMode: TruncationMode.Fade
-                                    visible: modelData.label !== modelData.url
-                                }
-                            }
-                        }
-
-                        // Subtle separator between entries, matching the
-                        // bookmark list's own row treatment.
-                        Rectangle {
-                            anchors {
-                                left: parent.left
-                                right: parent.right
-                                bottom: parent.bottom
-                                leftMargin: Theme.horizontalPageMargin
-                                rightMargin: Theme.horizontalPageMargin
-                            }
-                            height: 1
-                            color: Theme.rgba(Theme.primaryColor, 0.15)
-                            visible: index < links.length - 1
-                        }
+                        text: modelData.label
+                        color: modelData.kind === "source" ? Theme.secondaryColor : Theme.highlightColor
+                        font.pixelSize: modelData.kind === "source" ? Theme.fontSizeExtraSmall : Theme.fontSizeDefault
+                        truncationMode: TruncationMode.Fade
+                    }
+                    Label {
+                        width: parent.width
+                        text: modelData.url
+                        color: modelData.kind === "source" ? Theme.primaryColor : Theme.secondaryColor
+                        font.pixelSize: modelData.kind === "source" ? Theme.fontSizeDefault : Theme.fontSizeExtraSmall
+                        truncationMode: TruncationMode.Fade
+                        visible: modelData.kind === "source" || modelData.label !== modelData.url
                     }
                 }
             }
 
+            // Subtle separator between entries, matching the bookmark
+            // list's own row treatment.
+            Rectangle {
+                anchors {
+                    left: parent.left
+                    right: parent.right
+                    bottom: parent.bottom
+                    leftMargin: Theme.horizontalPageMargin
+                    rightMargin: Theme.horizontalPageMargin
+                }
+                height: 1
+                color: Theme.rgba(Theme.primaryColor, 0.15)
+                visible: index < listItems.length - 1
+            }
+        }
+
+        footer: Item {
+            width: listView.width
+            height: listItems.length === 0 ? noLinksLabel.height + Theme.paddingLarge : 0
+
             Label {
+                id: noLinksLabel
                 x: Theme.horizontalPageMargin
                 width: parent.width - 2 * Theme.horizontalPageMargin
                 wrapMode: Text.WordWrap
                 text: qsTr("No further links found in this article")
                 color: Theme.secondaryColor
-                visible: links.length === 0
+                visible: listItems.length === 0
             }
         }
 

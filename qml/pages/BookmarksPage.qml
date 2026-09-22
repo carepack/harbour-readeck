@@ -13,6 +13,18 @@ Page {
     property bool hasMore: true
     property bool _loaded: false
 
+    readonly property var categoryKeys: ["unread", "favorites", "archive", "all"]
+
+    function nextCategory() {
+        var idx = (categoryKeys.indexOf(currentFilter) + 1) % categoryKeys.length
+        setFilter(categoryKeys[idx])
+    }
+
+    function prevCategory() {
+        var idx = (categoryKeys.indexOf(currentFilter) - 1 + categoryKeys.length) % categoryKeys.length
+        setFilter(categoryKeys[idx])
+    }
+
     function reload() {
         offset = 0
         hasMore = true
@@ -98,6 +110,53 @@ Page {
 
     BookmarkListModel { id: bookmarkModel }
 
+    // Horizontal-only gesture detector wrapping the real page content,
+    // which stays put and only ever scrolls vertically as normal --
+    // Qt Quick resolves a drag on nested Flickables to whichever one's
+    // configured axis it actually matches, so a vertical drag here
+    // passes straight through untouched to the SilicaListView below,
+    // and only a clearly horizontal drag is captured by this one. A
+    // content width of 3x the page lets the drag go one full page-width
+    // either side of center before hitting the end of this virtual
+    // space; onMovementEnded checks how far past center it got, cycles
+    // the category (wrapping past either end, like a carousel) if it
+    // crossed the threshold, and always snaps back to center -- the
+    // real content never actually needs to move, only the category
+    // (and therefore the list underneath it) changes.
+    //
+    // The header (title/tabs/search) stays inside the SilicaListView's
+    // own header: -- pulling it out into a separate fixed sibling once
+    // broke PullDownMenu's positioning (it assumes it's attached to the
+    // page's actual, only, scrollable view) and made the search field
+    // permanently pinned instead of scrolling away with the list as
+    // usual. Instead, the header gets a counter-transform that exactly
+    // cancels out the horizontal pan while a swipe is in progress, so
+    // visually only the delegate items appear to move -- the header
+    // still scrolls normally with the list vertically, still owns the
+    // one real PullDownMenu, and nothing about that relationship changes.
+    SilicaFlickable {
+        id: swipeArea
+        anchors.fill: parent
+        flickableDirection: Flickable.HorizontalFlick
+        contentWidth: width * 3
+        contentHeight: height
+        contentX: width
+
+        onMovementEnded: {
+            var delta = contentX - width
+            if (delta > width * 0.25) {
+                page.nextCategory()
+            } else if (delta < -width * 0.25) {
+                page.prevCategory()
+            }
+            contentX = width
+        }
+
+    Item {
+        x: swipeArea.width
+        width: swipeArea.width
+        height: swipeArea.height
+
     SilicaListView {
         id: listView
         anchors.fill: parent
@@ -119,49 +178,66 @@ Page {
             }
         }
 
-        header: Column {
+        header: Item {
+            id: headerWrapper
             width: listView.width
+            height: headerColumn.height
 
-            PageHeader { title: qsTr("Readeck") }
-
-            Row {
+            // The counter-shift transform lives on this inner Column,
+            // not on headerWrapper itself (the thing actually assigned
+            // to ListView's header:) -- a transform on the header item
+            // ListView/PullDownMenu directly measure fed back into a
+            // real QML "Binding loop detected" warning (confirmed
+            // live), since PullDownMenu's own bindings target the same
+            // flickable's contentHeight/bottomMargin. headerWrapper's
+            // height is a plain, transform-independent binding, so
+            // ListView's layout math never sees anything move.
+            Column {
+                id: headerColumn
                 width: parent.width
-                height: Theme.itemSizeExtraSmall
+                transform: Translate { x: swipeArea.contentX - swipeArea.width }
 
-                Repeater {
-                    model: [
-                        { key: "unread", label: qsTr("Unread") },
-                        { key: "favorites", label: qsTr("Favorites") },
-                        { key: "archive", label: qsTr("Archive") },
-                        { key: "all", label: qsTr("All") }
-                    ]
+                PageHeader { title: qsTr("Readeck") }
 
-                    BackgroundItem {
-                        width: parent.width / 4
-                        height: parent.height
-                        highlighted: down || page.currentFilter === modelData.key
+                Row {
+                    width: parent.width
+                    height: Theme.itemSizeExtraSmall
 
-                        Label {
-                            anchors.centerIn: parent
-                            text: modelData.label
-                            font.pixelSize: Theme.fontSizeExtraSmall
-                            color: page.currentFilter === modelData.key
-                                   ? Theme.highlightColor
-                                   : (parent.highlighted ? Theme.secondaryHighlightColor : Theme.secondaryColor)
+                    Repeater {
+                        model: [
+                            { key: "unread", label: qsTr("Unread") },
+                            { key: "favorites", label: qsTr("Favorites") },
+                            { key: "archive", label: qsTr("Archive") },
+                            { key: "all", label: qsTr("All") }
+                        ]
+
+                        BackgroundItem {
+                            width: parent.width / 4
+                            height: parent.height
+                            highlighted: down || page.currentFilter === modelData.key
+
+                            Label {
+                                anchors.centerIn: parent
+                                text: modelData.label
+                                font.pixelSize: Theme.fontSizeExtraSmall
+                                color: page.currentFilter === modelData.key
+                                       ? Theme.highlightColor
+                                       : (parent.highlighted ? Theme.secondaryHighlightColor : Theme.secondaryColor)
+                            }
+
+                            onClicked: page.setFilter(modelData.key)
                         }
-
-                        onClicked: page.setFilter(modelData.key)
                     }
                 }
-            }
 
-            SearchField {
-                id: searchField
-                width: parent.width
-                placeholderText: qsTr("Search bookmarks")
-                onTextChanged: {
-                    page.searchText = text
-                    searchDebounce.restart()
+                SearchField {
+                    id: searchField
+                    width: parent.width
+                    placeholderText: qsTr("Search bookmarks")
+                    onTextChanged: {
+                        page.searchText = text
+                        searchDebounce.restart()
+                    }
                 }
             }
         }
@@ -206,6 +282,9 @@ Page {
               : qsTr("No bookmarks yet")
         hintText: qsTr("Pull down to add one")
     }
+
+    } // Item
+    } // SilicaFlickable (swipeArea)
 
     Timer {
         id: searchDebounce

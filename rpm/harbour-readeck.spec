@@ -1,10 +1,10 @@
 Name:       harbour-readeck
 
 Summary:    Read-it-later client for Readeck
-Version:    1.0.0
+Version:    1.1.0
 Release:    1
 License:    MIT
-URL:        https://github.com/example/harbour-readeck
+URL:        https://github.com/carepack/harbour-readeck
 Source0:    %{name}-%{version}.tar.bz2
 Requires:   sailfishsilica-qt5 >= 0.10.9
 Requires:   sailfish-components-webview-qt5
@@ -31,10 +31,10 @@ Categories:
  - Network
  - Office
 Custom:
-  Repo: https://github.com/example/harbour-readeck
+  Repo: https://github.com/carepack/harbour-readeck
 Links:
-  Homepage: https://github.com/example/harbour-readeck
-  Bugtracker: https://github.com/example/harbour-readeck/issues
+  Homepage: https://github.com/carepack/harbour-readeck
+  Bugtracker: https://github.com/carepack/harbour-readeck/issues
 %endif
 
 

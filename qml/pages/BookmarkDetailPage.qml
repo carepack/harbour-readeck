@@ -46,6 +46,72 @@ Page {
         return html.replace(/<[^>]*>/g, "")
     }
 
+    // Readeck's article HTML typically already wraps a captured image in
+    // <a href="...full-size.jpg">...<img .../>...</a> ("click to see it
+    // bigger" in a real browser) -- those keep their own href untouched,
+    // which onLinkActivated below re-routes into the in-app zoom viewer
+    // instead of the external browser. A bare <img> with no surrounding
+    // link isn't tappable at all otherwise, so it gets a synthetic
+    // <a href="its own src"> wrapper here. Already-linked images are
+    // matched and set aside first (as placeholder tokens) so the second,
+    // "wrap anything still bare" pass can't double-wrap them.
+    function wrapImages(html) {
+        var linked = []
+        var protectedHtml = html.replace(/<a\b[^>]*>[\s\S]*?<img\b[^>]*>[\s\S]*?<\/a>/gi, function (match) {
+            linked.push(match)
+            return "\u0000L" + (linked.length - 1) + "\u0000"
+        })
+        var wrapped = protectedHtml.replace(/<img\b[^>]*\ssrc\s*=\s*["']([^"']+)["'][^>]*>/gi, function (match, src) {
+            return "<a href=\"" + src + "\">" + match + "</a>"
+        })
+        return wrapped.replace(/\u0000L(\d+)\u0000/g, function (m, idx) {
+            return linked[Number(idx)]
+        })
+    }
+
+    function isImageUrl(url) {
+        return /\.(jpe?g|png|gif|webp|bmp|svg)(\?.*)?$/i.test(url)
+    }
+
+    // Source sites often ship their own inline text coloring (a
+    // hardcoded "color: ..." style attribute, or a legacy <font
+    // color="..."> attribute) on prose that isn't a link at all --
+    // pull-quotes, headings, etc. Qt's rich text engine honors it and
+    // it overrides this page's own "color: Theme.primaryColor" below,
+    // so it's stripped for general prose text too, independent of the
+    // link-specific fix in styleLinks() below.
+    function stripInlineColors(html) {
+        return html
+            .replace(/\scolor\s*=\s*("[^"]*"|'[^']*')/gi, "")
+            .replace(/(style\s*=\s*")([^"]*)(")/gi, function (match, pre, styleBody, post) {
+                var cleaned = styleBody.replace(/(^|;)\s*color\s*:[^;]*/gi, "$1").replace(/^;+/, "").trim()
+                return pre + cleaned + post
+            })
+    }
+
+    // The QML Text/Label "linkColor" property (used below to try to
+    // theme link color via "linkColor: Theme.highlightColor") was only
+    // added in Qt 5.14 -- this Sailfish OS target ships Qt 5.6.3
+    // (confirmed via "rpm -q qt5-qtdeclarative" on-device), so that
+    // property assignment was always a silent no-op there, and every
+    // link actually rendered in Qt's own built-in default anchor color
+    // (a fixed blue, independent of ambience/theme) the whole time --
+    // explaining why stripping the *source* HTML's inline colors alone
+    // never changed anything, since nothing in the source HTML was
+    // actually responsible. The only way to control link color on this
+    // Qt version is to put the color directly into the HTML itself, as
+    // an inline style on every <a> tag, which QTextDocument's HTML
+    // parser does honor regardless of Qt version.
+    function styleLinks(html) {
+        var hex = "" + Theme.highlightColor
+        var rgb = hex.length === 9 ? ("#" + hex.substring(3)) : hex
+        var linkStyle = "color:" + rgb + ";text-decoration:underline;"
+        return html.replace(/<a\b([^>]*)>/gi, function (match, attrs) {
+            var cleanedAttrs = attrs.replace(/\sstyle\s*=\s*("[^"]*"|'[^']*')/gi, "")
+            return "<a" + cleanedAttrs + " style=\"" + linkStyle + "\">"
+        })
+    }
+
     function decodeEntities(text) {
         return text
             .replace(/&lt;/g, "<")
@@ -122,7 +188,7 @@ Page {
             return
         }
         var maxWidth = Math.floor(page.width - 2 * Theme.horizontalPageMargin)
-        articleSegments = extractSegments(fixImages(articleHtml, maxWidth))
+        articleSegments = extractSegments(fixImages(styleLinks(wrapImages(stripInlineColors(articleHtml))), maxWidth))
     }
 
     onArticleHtmlChanged: rebuildSegments()
@@ -187,6 +253,24 @@ Page {
             MenuItem {
                 text: qsTr("Open in browser")
                 onClicked: Qt.openUrlExternally(initialUrl)
+            }
+            MenuItem {
+                text: qsTr("Export as PDF")
+                visible: articleLoaded
+                onClicked: {
+                    var dialog = pageStack.push(Qt.resolvedUrl("PdfLocationDialog.qml"))
+                    dialog.accepted.connect(function() {
+                        var path = readeckClient.exportArticlePdf(initialTitle || initialUrl, articleHtml, dialog.folder)
+                        if (path) {
+                            exportBanner.color = Theme.rgba(Theme.secondaryHighlightColor, 0.9)
+                            exportBanner.text = qsTr("Saved to %1").arg(path)
+                        } else {
+                            exportBanner.color = Theme.rgba(Theme.highlightBackgroundColor, 0.9)
+                            exportBanner.text = readeckClient.lastError
+                        }
+                        exportBanner.visible = true
+                    })
+                }
             }
             MenuItem {
                 text: qsTr("Delete")
@@ -301,10 +385,15 @@ Page {
                         wrapMode: Text.WordWrap
                         horizontalAlignment: Text.AlignJustify
                         textFormat: Text.RichText
-                        linkColor: Theme.highlightColor
                         color: Theme.primaryColor
                         text: modelData.type !== "code" ? modelData.content : ""
-                        onLinkActivated: Qt.openUrlExternally(link)
+                        onLinkActivated: {
+                            if (isImageUrl(link)) {
+                                pageStack.push(Qt.resolvedUrl("ImageViewerPage.qml"), { imageSource: link })
+                            } else {
+                                Qt.openUrlExternally(link)
+                            }
+                        }
                     }
 
                     Item {
@@ -340,4 +429,42 @@ Page {
     }
 
     RemorsePopup { id: remorse }
+
+    // Simple transient banner instead of a full notification system --
+    // mirrors the same pattern used elsewhere in this app.
+    Rectangle {
+        id: exportBanner
+        property alias text: exportBannerLabel.text
+
+        anchors {
+            left: parent.left
+            right: parent.right
+            bottom: parent.bottom
+        }
+        height: visible ? exportBannerLabel.implicitHeight + 2 * Theme.paddingMedium : 0
+        visible: false
+
+        Label {
+            id: exportBannerLabel
+            anchors {
+                left: parent.left
+                right: parent.right
+                verticalCenter: parent.verticalCenter
+                margins: Theme.horizontalPageMargin
+            }
+            wrapMode: Text.WordWrap
+            color: Theme.primaryColor
+        }
+
+        MouseArea {
+            anchors.fill: parent
+            onClicked: exportBanner.visible = false
+        }
+
+        Timer {
+            running: exportBanner.visible
+            interval: 4000
+            onTriggered: exportBanner.visible = false
+        }
+    }
 }
