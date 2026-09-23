@@ -1,0 +1,21 @@
+# Rename this file to harbour-readeck.changes to include it in the RPM.
+# Add newest entries at the top.
+
+* Wed Sep 23 2026 em_prv <em_prv@gmx.de> 1.1.2-1
+- Fix a second, harder-to-hit crash on export for longer real articles
+  with several images spread through the text
+
+* Wed Sep 23 2026 em_prv <em_prv@gmx.de> 1.1.1-1
+- Fix a crash on export when an article has two or more images
+
+* Tue Sep 22 2026 em_prv <em_prv@gmx.de> 1.1.0-1
+- Swipe left/right on the main list to move between categories
+- Export an article as a formatted PDF, with images embedded
+- Tap an image in an article to view it full-screen with pinch/double-tap zoom
+- Article info page: long-press the source or any link to copy it
+
+* Fri Sep 18 2026 Contributor <contributor@example.com> 1.0.0-1
+- First official release
+
+* Mon Sep 07 2026 Contributor <contributor@example.com> 0.1.0-1
+- Initial release

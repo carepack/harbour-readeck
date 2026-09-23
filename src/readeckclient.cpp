@@ -19,6 +19,7 @@
 #include <QRegularExpression>
 #include <QEventLoop>
 #include <QImage>
+#include <QSet>
 
 namespace {
 // Sailfish OS ships Qt 5.6, which predates QNetworkAccessManager::sendCustomRequest()
@@ -58,31 +59,93 @@ class PdfImageResourceDocument : public QTextDocument
 public:
     explicit PdfImageResourceDocument(QObject *parent = nullptr) : QTextDocument(parent) {}
 
+    // Pre-fetches every <img src="http(s)://..."> found in html and
+    // populates this document's own resource cache with the result,
+    // BEFORE setHtml() is ever called on it. This must run first: a
+    // real, reproducible SIGSEGV inside libQt5Gui.so (address 0) was
+    // bisected live to loadResource()'s synchronous nested QEventLoop
+    // firing *while setHtml() is still parsing/laying out the rest of
+    // a long real document* -- confirmed by testing the exact same
+    // images and text with only their arrangement changed: the same
+    // images loaded consecutively before any of that text, or any one
+    // of them individually alongside the full text, never crashed, but
+    // several images left interleaved at their real positions
+    // throughout a long real article reliably did. Pre-fetching moves
+    // every network round-trip (and its nested loop.exec()) to before
+    // setHtml() even starts, so parsing/layout never gets interrupted
+    // by one again -- QTextDocument's own resource lookup finds
+    // everything already cached, and loadResource() below (kept as a
+    // fallback for any URL this misses) should no longer be reached
+    // for images at all in practice.
+    void prefetchImages(const QString &html)
+    {
+        static const QRegularExpression imgSrcRe(
+            QStringLiteral("<img\\b[^>]*\\ssrc\\s*=\\s*[\"']([^\"']+)[\"']"),
+            QRegularExpression::CaseInsensitiveOption);
+        QSet<QString> seen;
+        QRegularExpressionMatchIterator it = imgSrcRe.globalMatch(html);
+        while (it.hasNext()) {
+            const QString src = it.next().captured(1);
+            if (seen.contains(src)) {
+                continue;
+            }
+            seen.insert(src);
+            const QUrl url(src);
+            if (url.scheme() == QLatin1String("http") || url.scheme() == QLatin1String("https")) {
+                fetchAndCache(url);
+            }
+        }
+    }
+
 protected:
     QVariant loadResource(int type, const QUrl &url) override
     {
         if (type == QTextDocument::ImageResource
                 && (url.scheme() == QLatin1String("http") || url.scheme() == QLatin1String("https"))) {
-            QNetworkAccessManager manager;
-            QNetworkReply *reply = manager.get(QNetworkRequest(url));
-            QEventLoop loop;
-            QObject::connect(reply, &QNetworkReply::finished, &loop, &QEventLoop::quit);
-            loop.exec();
-
-            QImage image;
-            if (reply->error() == QNetworkReply::NoError) {
-                image.loadFromData(reply->readAll());
-            }
-            reply->deleteLater();
-
-            if (!image.isNull()) {
-                addResource(QTextDocument::ImageResource, url, image);
-                return image;
-            }
-            return QVariant();
+            return fetchAndCache(url);
         }
         return QTextDocument::loadResource(type, url);
     }
+
+private:
+    QVariant fetchAndCache(const QUrl &url)
+    {
+        // m_manager is a member (constructed once, alive for this whole
+        // document's lifetime), not a local variable -- a previous
+        // version created a fresh QNetworkAccessManager here on the
+        // stack for every single image. QNetworkReply is parented to
+        // the manager that created it by default, so that manager going
+        // out of scope at the end of this function destroyed the reply
+        // *immediately*, synchronously -- before the
+        // "reply->deleteLater()" below ever got a chance to run. For an
+        // article with only one image this happened to go unnoticed;
+        // for any article with two or more images, the second (and
+        // later) image's already-dangling deleteLater() event fired
+        // during a *later* call's own loop.exec() (which processes all
+        // pending events on the thread, not just its own reply's),
+        // deleting an object that no longer existed -- confirmed live on
+        // real aarch64 hardware as a SIGSEGV, that a single-image test
+        // on the desktop-class SDK emulator never reproduced.
+        QNetworkReply *reply = m_manager.get(QNetworkRequest(url));
+        QEventLoop loop;
+        QObject::connect(reply, &QNetworkReply::finished, &loop, &QEventLoop::quit);
+        loop.exec();
+
+        QImage image;
+        if (reply->error() == QNetworkReply::NoError) {
+            image.loadFromData(reply->readAll());
+        }
+        reply->deleteLater();
+
+        if (!image.isNull()) {
+            addResource(QTextDocument::ImageResource, url, image);
+            return image;
+        }
+        return QVariant();
+    }
+
+private:
+    QNetworkAccessManager m_manager;
 };
 
 // Same "cap explicit width/height, drop the rest" approach as the QML
@@ -698,10 +761,21 @@ QString ReadeckClient::exportArticlePdf(const QString &title, const QString &htm
             .arg(title.toHtmlEscaped(), capImageWidths(html, int(pageSizePoints.width())));
 
     PdfImageResourceDocument document;
+    document.prefetchImages(styledHtml);
     document.setHtml(styledHtml);
     document.setPageSize(pageSizePoints);
 
     document.print(&writer);
+
+    // Flushes the last image's still-pending reply->deleteLater() (see
+    // the comment in PdfImageResourceDocument::loadResource()) while
+    // "document" (and its m_manager, that reply's QObject parent) is
+    // still alive. Without this, the very last image's deferred delete
+    // would only run once this function has already returned to the
+    // QML engine's own event loop -- by which point "document" has
+    // gone out of scope and its manager, along with that reply, is
+    // already destroyed.
+    QCoreApplication::processEvents(QEventLoop::AllEvents, 100);
 
     return filePath;
 }

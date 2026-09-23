@@ -88,7 +88,9 @@ push via [CODeRUS/github-sfos-build](https://github.com/CODeRUS/github-sfos-buil
   sandbox) — plaintext, same trust model most FOSS Readeck clients use.
   Sailfish Secrets-backed storage would be a good follow-up.
 
-## Before publishing to Harbour/Chum
+## Changelog
 
-- Rename `rpm/harbour-readeck.changes.in` → `harbour-readeck.changes` (or
-  wire up `harbour-readeck.changes.run`).
+`rpm/harbour-readeck.changes` is included into the spec's `%changelog`
+section (`%include harbour-readeck.changes`) and shipped in the RPM's
+metadata, so stores that read it (e.g. OpenRepos' "Changelog Autoupdate")
+display it automatically. Add a new entry at the top on every release.
