@@ -1,6 +1,10 @@
 # Rename this file to harbour-readeck.changes to include it in the RPM.
 # Add newest entries at the top.
 
+* Sat Oct 10 2026 Contributor <contributor@example.com> 1.1.4-1
+- Login token and username are now stored via Sailfish Secrets instead of
+  a plaintext config file; existing sessions are migrated automatically
+
 * Tue Sep 29 2026 Contributor <contributor@example.com> 1.1.3-1
 - Add a setting to toggle justified article text on/off
 - Settings page: server/username shown as label then value on its own line,

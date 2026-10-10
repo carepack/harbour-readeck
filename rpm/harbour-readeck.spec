@@ -1,13 +1,14 @@
 Name:       harbour-readeck
 
 Summary:    Read-it-later client for Readeck
-Version:    1.1.3
+Version:    1.1.4
 Release:    1
 License:    MIT
 URL:        https://github.com/carepack/harbour-readeck
 Source0:    %{name}-%{version}.tar.bz2
 Requires:   sailfishsilica-qt5 >= 0.10.9
 Requires:   sailfish-components-webview-qt5
+Requires:   libsailfishsecrets
 BuildRequires:  pkgconfig(sailfishapp) >= 1.0.2
 BuildRequires:  pkgconfig(Qt5Core)
 BuildRequires:  pkgconfig(Qt5Qml)
