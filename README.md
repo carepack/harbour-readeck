@@ -59,9 +59,6 @@ sfdk config device "My Phone"
 sfdk deploy --sdk
 ```
 
-CI: `.github/workflows/build.yml` builds RPMs for armv7hl/aarch64 on every
-push via [CODeRUS/github-sfos-build](https://github.com/CODeRUS/github-sfos-build).
-
 ## Readeck API notes
 
 - Base URL: `<server>/api`
