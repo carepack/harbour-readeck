@@ -16,6 +16,7 @@ add_executable(harbour-readeck
     src/readeckclient.cpp
     src/bookmarklistmodel.cpp
     src/sharereceiver.cpp
+    src/secretscredentialstore.cpp
 )
 
 target_compile_definitions(harbour-readeck PRIVATE
