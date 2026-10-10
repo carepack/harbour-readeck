@@ -4,6 +4,7 @@
 
 #include <QCoreApplication>
 #include <QSettings>
+#include <QDebug>
 #include <QJsonArray>
 #include <QJsonParseError>
 #include <QHttpMultiPart>
@@ -207,6 +208,7 @@ QString capImageWidths(const QString &html, int maxWidth)
 ReadeckClient::ReadeckClient(QObject *parent)
     : QObject(parent)
     , m_manager(new PatchCapableNetworkAccessManager(this))
+    , m_secretsStore(QStringLiteral("harbour-readeck/session"))
     , m_busy(false)
     , m_unreadCount(0)
     , m_coverIndex(0)
@@ -276,9 +278,20 @@ void ReadeckClient::persistSession()
     QSettings settings;
     settings.beginGroup(QStringLiteral("session"));
     settings.setValue(QStringLiteral("endpoint"), m_endpoint);
-    settings.setValue(QStringLiteral("username"), m_username);
-    settings.setValue(QStringLiteral("token"), m_token);
     settings.endGroup();
+}
+
+void ReadeckClient::persistCredential()
+{
+    QVariantMap credential;
+    credential[QStringLiteral("username")] = m_username;
+    credential[QStringLiteral("token")] = m_token;
+    if (m_secretsStore.store(credential) != SecretsCredentialStore::Outcome::Succeeded) {
+        // R6: the session still works for this run, held only in memory;
+        // nothing is written back to plaintext QSettings as a fallback.
+        qWarning() << "ReadeckClient: failed to store credential in Secrets; "
+                      "session will not survive an app restart";
+    }
 }
 
 void ReadeckClient::restoreSession()
@@ -286,9 +299,13 @@ void ReadeckClient::restoreSession()
     QSettings settings;
     settings.beginGroup(QStringLiteral("session"));
     m_endpoint = settings.value(QStringLiteral("endpoint")).toString();
-    m_username = settings.value(QStringLiteral("username")).toString();
-    m_token = settings.value(QStringLiteral("token")).toString();
     settings.endGroup();
+
+    QVariantMap credential;
+    if (m_secretsStore.load(&credential) == SecretsCredentialStore::Outcome::Succeeded) {
+        m_username = credential.value(QStringLiteral("username")).toString();
+        m_token = credential.value(QStringLiteral("token")).toString();
+    }
 }
 
 QString ReadeckClient::normalizeEndpoint(const QString &input)
@@ -598,6 +615,7 @@ void ReadeckClient::finishLogin(const QString &endpoint, const QString &token)
             m_token = token;
             m_username = username;
             persistSession();
+            persistCredential();
             emit endpointChanged();
             emit usernameChanged();
             emit isLoggedInChanged();
@@ -632,9 +650,20 @@ void ReadeckClient::logout()
         connect(reply, &QNetworkReply::finished, reply, &QNetworkReply::deleteLater);
     }
 
+    if (m_secretsStore.remove() != SecretsCredentialStore::Outcome::Succeeded) {
+        // Daemon unreachable or some other genuine failure: the app still
+        // logs the user out now, but the stale secret may still exist, so
+        // flag it for U4 to retry-delete on the next launch before trusting
+        // any restoreSession() load -- never let a failed-delete secret
+        // silently resurrect a session the user explicitly ended (R7).
+        QSettings settings;
+        settings.setValue(QStringLiteral("session/pendingSecretDelete"), true);
+        qWarning() << "ReadeckClient: failed to delete credential from Secrets; "
+                      "will retry on next launch";
+    }
+
     m_token.clear();
     m_username.clear();
-    persistSession();
     emit usernameChanged();
     emit isLoggedInChanged();
 }

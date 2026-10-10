@@ -12,6 +12,8 @@
 #include <QStringList>
 #include <QTimer>
 
+#include "secretscredentialstore.h"
+
 // Talks to a Readeck server's REST API (https://readeck.org) and persists
 // the session (server URL, username, API token) in the app's private
 // QSettings storage. One instance lives for the whole app lifetime and is
@@ -171,11 +173,13 @@ private:
     void setBusy(bool busy);
     void setLastError(const QString &error);
     void persistSession();
+    void persistCredential();
     void restoreSession();
     void requestDeviceCode(const QString &endpoint);
     void finishLogin(const QString &endpoint, const QString &token);
 
     QNetworkAccessManager *m_manager;
+    SecretsCredentialStore m_secretsStore;
     QString m_endpoint;
     QString m_token;
     QString m_username;
