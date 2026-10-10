@@ -22,6 +22,8 @@ public:
     Outcome remove();
 
 private:
+    Outcome removeInternal();
+
     QString m_secretName;
     Sailfish::Secrets::SecretManager m_manager;
 };

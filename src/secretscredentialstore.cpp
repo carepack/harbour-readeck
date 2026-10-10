@@ -38,6 +38,15 @@ SecretsCredentialStore::SecretsCredentialStore(const QString &secretName)
 
 SecretsCredentialStore::Outcome SecretsCredentialStore::store(const QVariantMap &fields)
 {
+    // Confirmed via secrets-tool: StoreSecretRequest on an identifier that
+    // already exists fails with SecretAlreadyExistsError rather than
+    // overwriting -- a standalone secret has no "replace" request type, so
+    // storing over an existing credential (e.g. a second login) needs an
+    // explicit delete first. A NotFound outcome here is expected and fine;
+    // only a genuine Failed is worth logging, since it means the deletion
+    // (not the subsequent store) is what's about to be retried below.
+    removeInternal();
+
     Sailfish::Secrets::Secret secret(identifierFor(m_secretName));
     secret.setData(QJsonDocument::fromVariant(fields).toJson(QJsonDocument::Compact));
 
@@ -75,6 +84,11 @@ SecretsCredentialStore::Outcome SecretsCredentialStore::load(QVariantMap *outFie
 }
 
 SecretsCredentialStore::Outcome SecretsCredentialStore::remove()
+{
+    return removeInternal();
+}
+
+SecretsCredentialStore::Outcome SecretsCredentialStore::removeInternal()
 {
     Sailfish::Secrets::DeleteSecretRequest req;
     req.setManager(&m_manager);

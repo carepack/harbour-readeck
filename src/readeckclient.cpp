@@ -299,7 +299,37 @@ void ReadeckClient::restoreSession()
     QSettings settings;
     settings.beginGroup(QStringLiteral("session"));
     m_endpoint = settings.value(QStringLiteral("endpoint")).toString();
+    const bool pendingSecretDelete = settings.value(QStringLiteral("pendingSecretDelete"), false).toBool();
+    const QString plaintextToken = settings.value(QStringLiteral("token")).toString();
+    const QString plaintextUsername = settings.value(QStringLiteral("username")).toString();
     settings.endGroup();
+
+    if (pendingSecretDelete) {
+        // A prior logout's Secrets delete failed (U3); retry it now, before
+        // any load below, so a secret that failed to delete can never
+        // silently resurrect the session the user explicitly ended (R7).
+        if (m_secretsStore.remove() == SecretsCredentialStore::Outcome::Succeeded) {
+            settings.remove(QStringLiteral("session/pendingSecretDelete"));
+        }
+    }
+
+    if (!plaintextToken.isEmpty()) {
+        // Leftover from a version before this change shipped: migrate it
+        // into Secrets once, then forget it ever lived in QSettings (R5).
+        // The user stays logged in either way; if the one-time store
+        // fails, the plaintext value is left in place and this same check
+        // retries on the next launch rather than losing the session.
+        QVariantMap credential;
+        credential[QStringLiteral("username")] = plaintextUsername;
+        credential[QStringLiteral("token")] = plaintextToken;
+        if (m_secretsStore.store(credential) == SecretsCredentialStore::Outcome::Succeeded) {
+            settings.remove(QStringLiteral("session/token"));
+            settings.remove(QStringLiteral("session/username"));
+        }
+        m_username = plaintextUsername;
+        m_token = plaintextToken;
+        return;
+    }
 
     QVariantMap credential;
     if (m_secretsStore.load(&credential) == SecretsCredentialStore::Outcome::Succeeded) {
