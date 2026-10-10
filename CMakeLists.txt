@@ -5,6 +5,7 @@ find_package(Qt5 COMPONENTS Core Network Qml Gui Quick DBus REQUIRED)
 
 include(FindPkgConfig)
 pkg_search_module(SAILFISH sailfishapp REQUIRED)
+pkg_search_module(SAILFISHSECRETS sailfishsecrets REQUIRED)
 
 set(CMAKE_AUTOMOC ON)
 set(CMAKE_INCLUDE_CURRENT_DIR ON)
@@ -22,6 +23,7 @@ target_compile_definitions(harbour-readeck PRIVATE
 )
 target_include_directories(harbour-readeck PRIVATE
     "$<BUILD_INTERFACE:${SAILFISH_INCLUDE_DIRS}>"
+    "$<BUILD_INTERFACE:${SAILFISHSECRETS_INCLUDE_DIRS}>"
 )
 target_link_libraries(harbour-readeck
     Qt5::Quick
@@ -29,6 +31,7 @@ target_link_libraries(harbour-readeck
     Qt5::Network
     Qt5::DBus
     ${SAILFISH_LDFLAGS}
+    ${SAILFISHSECRETS_LDFLAGS}
 )
 
 install(TARGETS harbour-readeck RUNTIME DESTINATION bin)
