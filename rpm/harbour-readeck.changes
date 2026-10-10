@@ -2,8 +2,7 @@
 # Add newest entries at the top.
 
 * Sat Oct 10 2026 Contributor <contributor@example.com> 1.1.4-1
-- Login token and username are now stored via Sailfish Secrets instead of
-  a plaintext config file; existing sessions are migrated automatically
+- Your login is now kept in Sailfish's own secure storage instead of a plain settings file. If you were already signed in, nothing to do -- it switches over by itself the next time you open the app.
 
 * Tue Sep 29 2026 Contributor <contributor@example.com> 1.1.3-1
 - Add a setting to toggle justified article text on/off
