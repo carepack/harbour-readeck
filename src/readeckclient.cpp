@@ -4,6 +4,7 @@
 
 #include <QCoreApplication>
 #include <QSettings>
+#include <QDebug>
 #include <QJsonArray>
 #include <QJsonParseError>
 #include <QHttpMultiPart>
@@ -207,6 +208,7 @@ QString capImageWidths(const QString &html, int maxWidth)
 ReadeckClient::ReadeckClient(QObject *parent)
     : QObject(parent)
     , m_manager(new PatchCapableNetworkAccessManager(this))
+    , m_secretsStore(QStringLiteral("harbour-readeck/session"))
     , m_busy(false)
     , m_unreadCount(0)
     , m_coverIndex(0)
@@ -271,14 +273,38 @@ void ReadeckClient::setLastError(const QString &error)
     emit lastErrorChanged();
 }
 
-void ReadeckClient::persistSession()
+void ReadeckClient::persistEndpoint()
 {
     QSettings settings;
     settings.beginGroup(QStringLiteral("session"));
     settings.setValue(QStringLiteral("endpoint"), m_endpoint);
-    settings.setValue(QStringLiteral("username"), m_username);
-    settings.setValue(QStringLiteral("token"), m_token);
     settings.endGroup();
+}
+
+QVariantMap ReadeckClient::credentialFields(const QString &username, const QString &token)
+{
+    QVariantMap credential;
+    credential[QStringLiteral("username")] = username;
+    credential[QStringLiteral("token")] = token;
+    return credential;
+}
+
+void ReadeckClient::persistCredential()
+{
+    if (m_secretsStore.store(credentialFields(m_username, m_token)) == SecretsCredentialStore::Outcome::Succeeded) {
+        // This store supersedes whatever a prior failed logout's delete was
+        // tracking: the identifier's current secret is the one just
+        // authenticated, not the stale one a pending retry would delete.
+        // Without this, restoreSession()'s pendingSecretDelete branch would
+        // delete this brand-new session on the next launch and log it out.
+        QSettings settings;
+        settings.remove(QStringLiteral("session/pendingSecretDelete"));
+    } else {
+        // R6: the session still works for this run, held only in memory;
+        // nothing is written back to plaintext QSettings as a fallback.
+        qWarning() << "ReadeckClient: failed to store credential in Secrets; "
+                      "session will not survive an app restart";
+    }
 }
 
 void ReadeckClient::restoreSession()
@@ -286,9 +312,43 @@ void ReadeckClient::restoreSession()
     QSettings settings;
     settings.beginGroup(QStringLiteral("session"));
     m_endpoint = settings.value(QStringLiteral("endpoint")).toString();
-    m_username = settings.value(QStringLiteral("username")).toString();
-    m_token = settings.value(QStringLiteral("token")).toString();
+    const bool pendingSecretDelete = settings.value(QStringLiteral("pendingSecretDelete"), false).toBool();
+    const QString plaintextToken = settings.value(QStringLiteral("token")).toString();
+    const QString plaintextUsername = settings.value(QStringLiteral("username")).toString();
     settings.endGroup();
+
+    if (pendingSecretDelete) {
+        // A prior logout's Secrets delete failed (U3); retry it now. Either
+        // way the user stays logged out this launch -- on success the
+        // secret is genuinely gone, and on failure it's still there, so
+        // falling through to load() below would silently resurrect the
+        // session the user explicitly ended (R7). Never load after this.
+        if (m_secretsStore.remove() == SecretsCredentialStore::Outcome::Succeeded) {
+            settings.remove(QStringLiteral("session/pendingSecretDelete"));
+        }
+        return;
+    }
+
+    if (!plaintextToken.isEmpty()) {
+        // Leftover from a version before this change shipped: migrate it
+        // into Secrets once, then forget it ever lived in QSettings (R5).
+        // The user stays logged in either way; if the one-time store
+        // fails, the plaintext value is left in place and this same check
+        // retries on the next launch rather than losing the session.
+        if (m_secretsStore.store(credentialFields(plaintextUsername, plaintextToken)) == SecretsCredentialStore::Outcome::Succeeded) {
+            settings.remove(QStringLiteral("session/token"));
+            settings.remove(QStringLiteral("session/username"));
+        }
+        m_username = plaintextUsername;
+        m_token = plaintextToken;
+        return;
+    }
+
+    QVariantMap credential;
+    if (m_secretsStore.load(&credential) == SecretsCredentialStore::Outcome::Succeeded) {
+        m_username = credential.value(QStringLiteral("username")).toString();
+        m_token = credential.value(QStringLiteral("token")).toString();
+    }
 }
 
 QString ReadeckClient::normalizeEndpoint(const QString &input)
@@ -597,7 +657,8 @@ void ReadeckClient::finishLogin(const QString &endpoint, const QString &token)
             m_endpoint = endpoint;
             m_token = token;
             m_username = username;
-            persistSession();
+            persistEndpoint();
+            persistCredential();
             emit endpointChanged();
             emit usernameChanged();
             emit isLoggedInChanged();
@@ -632,9 +693,33 @@ void ReadeckClient::logout()
         connect(reply, &QNetworkReply::finished, reply, &QNetworkReply::deleteLater);
     }
 
+    // Written before the blocking delete call below so a process killed
+    // mid-call still leaves a retry flag behind, rather than losing both
+    // the delete and the only record that one was needed (R7).
+    QSettings settings;
+    settings.setValue(QStringLiteral("session/pendingSecretDelete"), true);
+
+    if (m_secretsStore.remove() == SecretsCredentialStore::Outcome::Succeeded) {
+        settings.remove(QStringLiteral("session/pendingSecretDelete"));
+    } else {
+        // Daemon unreachable or some other genuine failure: the app still
+        // logs the user out now, but the stale secret may still exist, so
+        // the flag set above makes U4 retry-delete it on the next launch
+        // before trusting any restoreSession() load -- never let a
+        // failed-delete secret silently resurrect this session (R7).
+        qWarning() << "ReadeckClient: failed to delete credential from Secrets; "
+                      "will retry on next launch";
+    }
+
+    // A plaintext leftover from an interrupted migration (U2) must not
+    // survive an explicit logout either -- otherwise restoreSession()
+    // keeps retrying that migration on every later launch and silently
+    // logs the user back into the exact session they just ended (R7).
+    settings.remove(QStringLiteral("session/token"));
+    settings.remove(QStringLiteral("session/username"));
+
     m_token.clear();
     m_username.clear();
-    persistSession();
     emit usernameChanged();
     emit isLoggedInChanged();
 }
