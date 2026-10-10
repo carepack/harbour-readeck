@@ -3,6 +3,7 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 
+#include <Secrets/secretmanager.h>
 #include <Secrets/secret.h>
 #include <Secrets/storesecretrequest.h>
 #include <Secrets/storedsecretrequest.h>
@@ -33,8 +34,11 @@ bool isNotFoundError(Sailfish::Secrets::Result::ErrorCode code)
 
 SecretsCredentialStore::SecretsCredentialStore(const QString &secretName)
     : m_secretName(secretName)
+    , m_manager(new Sailfish::Secrets::SecretManager)
 {
 }
+
+SecretsCredentialStore::~SecretsCredentialStore() = default;
 
 SecretsCredentialStore::Outcome SecretsCredentialStore::store(const QVariantMap &fields)
 {
@@ -42,16 +46,19 @@ SecretsCredentialStore::Outcome SecretsCredentialStore::store(const QVariantMap 
     // already exists fails with SecretAlreadyExistsError rather than
     // overwriting -- a standalone secret has no "replace" request type, so
     // storing over an existing credential (e.g. a second login) needs an
-    // explicit delete first. A NotFound outcome here is expected and fine;
-    // only a genuine Failed is worth logging, since it means the deletion
-    // (not the subsequent store) is what's about to be retried below.
-    removeInternal();
+    // explicit delete first. A NotFound outcome is expected and fine; a
+    // genuine Failed here means the stale secret is still present, so the
+    // store below would almost certainly fail too -- don't spend a second
+    // doomed round trip on it.
+    if (removeInternal() == Outcome::Failed) {
+        return Outcome::Failed;
+    }
 
     Sailfish::Secrets::Secret secret(identifierFor(m_secretName));
     secret.setData(QJsonDocument::fromVariant(fields).toJson(QJsonDocument::Compact));
 
     Sailfish::Secrets::StoreSecretRequest req;
-    req.setManager(&m_manager);
+    req.setManager(m_manager.data());
     req.setSecretStorageType(Sailfish::Secrets::StoreSecretRequest::StandaloneDeviceLockSecret);
     req.setEncryptionPluginName(kEncryptionPlugin);
     req.setUserInteractionMode(Sailfish::Secrets::SecretManager::PreventInteraction);
@@ -67,7 +74,7 @@ SecretsCredentialStore::Outcome SecretsCredentialStore::store(const QVariantMap 
 SecretsCredentialStore::Outcome SecretsCredentialStore::load(QVariantMap *outFields)
 {
     Sailfish::Secrets::StoredSecretRequest req;
-    req.setManager(&m_manager);
+    req.setManager(m_manager.data());
     req.setIdentifier(identifierFor(m_secretName));
     req.setUserInteractionMode(Sailfish::Secrets::SecretManager::PreventInteraction);
     req.startRequest();
@@ -91,7 +98,7 @@ SecretsCredentialStore::Outcome SecretsCredentialStore::remove()
 SecretsCredentialStore::Outcome SecretsCredentialStore::removeInternal()
 {
     Sailfish::Secrets::DeleteSecretRequest req;
-    req.setManager(&m_manager);
+    req.setManager(m_manager.data());
     req.setIdentifier(identifierFor(m_secretName));
     req.setUserInteractionMode(Sailfish::Secrets::SecretManager::PreventInteraction);
     req.startRequest();

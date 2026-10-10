@@ -14,10 +14,11 @@
 
 #include "secretscredentialstore.h"
 
-// Talks to a Readeck server's REST API (https://readeck.org) and persists
-// the session (server URL, username, API token) in the app's private
-// QSettings storage. One instance lives for the whole app lifetime and is
-// exposed to QML as the "readeckClient" context property.
+// Talks to a Readeck server's REST API (https://readeck.org). The server
+// URL persists in the app's private QSettings storage; the username and
+// API token persist via Sailfish Secrets instead (SecretsCredentialStore)
+// -- never as plaintext. One instance lives for the whole app lifetime and
+// is exposed to QML as the "readeckClient" context property.
 class ReadeckClient : public QObject
 {
     Q_OBJECT
@@ -172,9 +173,10 @@ private:
 
     void setBusy(bool busy);
     void setLastError(const QString &error);
-    void persistSession();
+    void persistEndpoint();
     void persistCredential();
     void restoreSession();
+    static QVariantMap credentialFields(const QString &username, const QString &token);
     void requestDeviceCode(const QString &endpoint);
     void finishLogin(const QString &endpoint, const QString &token);
 
