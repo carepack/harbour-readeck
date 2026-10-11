@@ -4,7 +4,6 @@
 
 #include <QCoreApplication>
 #include <QSettings>
-#include <QThread>
 #include <QDebug>
 #include <QJsonArray>
 #include <QJsonParseError>
@@ -204,6 +203,7 @@ QString capImageWidths(const QString &html, int maxWidth)
     result += html.mid(lastEnd);
     return result;
 }
+
 }
 
 ReadeckClient::ReadeckClient(QObject *parent)
@@ -347,23 +347,39 @@ void ReadeckClient::restoreSession()
 
     QVariantMap credential;
     auto loadOutcome = m_secretsStore.load(&credential);
-    if (loadOutcome == SecretsCredentialStore::Outcome::Failed) {
-        // Suspected race on a real device: right after the user enters
-        // their device-lock code post-reboot, the Secrets daemon may not
-        // yet have propagated that unlock to a StandaloneDeviceLockSecret's
-        // encryption key by the time this constructor runs (it's one of
-        // the first things main() does). A genuine, permanent failure
-        // (corrupted secret, daemon truly down) will fail the retry too
-        // and fall through exactly as before; this only recovers the
-        // transient case. NotFound is not retried -- that's a legitimate
-        // "no secret stored" state, not a race.
-        QThread::msleep(500);
-        loadOutcome = m_secretsStore.load(&credential);
-    }
     if (loadOutcome == SecretsCredentialStore::Outcome::Succeeded) {
         m_username = credential.value(QStringLiteral("username")).toString();
         m_token = credential.value(QStringLiteral("token")).toString();
+    } else if (loadOutcome == SecretsCredentialStore::Outcome::Locked) {
+        // Confirmed on a real device: a post-boot CollectionIsLockedError
+        // does not reliably clear on its own within any bounded window,
+        // even well after the user has entered their device-lock code --
+        // silently polling for it to resolve isn't viable. Deferred via
+        // singleShot so this fires after the QML window is shown (this
+        // runs from the constructor, before main() calls view->show()):
+        // the platform's own unlock prompt then appears as an overlay on
+        // top of the visible login screen, the same way other Secrets-
+        // using apps (e.g. Bitwarden) prompt once per boot.
+        QTimer::singleShot(0, this, &ReadeckClient::unlockSecretsInteractively);
     }
+}
+
+void ReadeckClient::unlockSecretsInteractively()
+{
+    QVariantMap credential;
+    const auto outcome = m_secretsStore.load(&credential, /*allowInteraction=*/true);
+    if (outcome == SecretsCredentialStore::Outcome::Succeeded) {
+        m_username = credential.value(QStringLiteral("username")).toString();
+        m_token = credential.value(QStringLiteral("token")).toString();
+        emit usernameChanged();
+        emit isLoggedInChanged();
+        // LoginPage.qml navigates away only on loginSucceeded(), not on
+        // isLoggedInChanged() -- without this, the backend would already
+        // be authenticated while the login screen stayed on-screen.
+        emit loginSucceeded();
+    }
+    // Otherwise (user dismissed the prompt, or a genuine failure): stay on
+    // the login screen: the user can still log in manually.
 }
 
 QString ReadeckClient::normalizeEndpoint(const QString &input)
