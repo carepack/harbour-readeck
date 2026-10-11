@@ -4,6 +4,7 @@
 
 #include <QCoreApplication>
 #include <QSettings>
+#include <QThread>
 #include <QDebug>
 #include <QJsonArray>
 #include <QJsonParseError>
@@ -345,7 +346,21 @@ void ReadeckClient::restoreSession()
     }
 
     QVariantMap credential;
-    if (m_secretsStore.load(&credential) == SecretsCredentialStore::Outcome::Succeeded) {
+    auto loadOutcome = m_secretsStore.load(&credential);
+    if (loadOutcome == SecretsCredentialStore::Outcome::Failed) {
+        // Suspected race on a real device: right after the user enters
+        // their device-lock code post-reboot, the Secrets daemon may not
+        // yet have propagated that unlock to a StandaloneDeviceLockSecret's
+        // encryption key by the time this constructor runs (it's one of
+        // the first things main() does). A genuine, permanent failure
+        // (corrupted secret, daemon truly down) will fail the retry too
+        // and fall through exactly as before; this only recovers the
+        // transient case. NotFound is not retried -- that's a legitimate
+        // "no secret stored" state, not a race.
+        QThread::msleep(500);
+        loadOutcome = m_secretsStore.load(&credential);
+    }
+    if (loadOutcome == SecretsCredentialStore::Outcome::Succeeded) {
         m_username = credential.value(QStringLiteral("username")).toString();
         m_token = credential.value(QStringLiteral("token")).toString();
     }
