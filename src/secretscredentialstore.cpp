@@ -2,6 +2,7 @@
 
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QDebug>
 
 #include <Secrets/secretmanager.h>
 #include <Secrets/secret.h>
@@ -28,6 +29,33 @@ bool isNotFoundError(Sailfish::Secrets::Result::ErrorCode code)
 {
     return code == Sailfish::Secrets::Result::InvalidSecretError
             || code == Sailfish::Secrets::Result::InvalidSecretIdentifierError;
+}
+
+// Confirmed on a real device: right after boot, even after the user enters
+// their device-lock code, a load() against a StandaloneDeviceLockSecret
+// fails with CollectionIsLockedError for roughly a minute or more before
+// resolving on its own -- PreventInteraction can never satisfy whatever
+// the daemon needs here, so this is not a brief race a short retry can
+// paper over. CollectionIsBusyError is grouped with it as the same
+// "try again later, this isn't a real failure" class.
+bool isLockedError(Sailfish::Secrets::Result::ErrorCode code)
+{
+    return code == Sailfish::Secrets::Result::CollectionIsLockedError
+            || code == Sailfish::Secrets::Result::CollectionIsBusyError;
+}
+
+// Logs the real error code and message for any non-Succeeded result, since
+// SecretsCredentialStore's own Outcome enum collapses everything down to
+// Succeeded/NotFound/Failed -- without this, a genuine daemon-side failure
+// (e.g. right after a device-lock unlock post-reboot) is indistinguishable
+// from an ordinary "nothing stored yet" NotFound in anything short of a
+// debugger. `op` names the call site (e.g. "load", "store", "remove").
+void logIfNotSucceeded(const char *op, const Sailfish::Secrets::Result &result)
+{
+    if (result.code() != Sailfish::Secrets::Result::Succeeded) {
+        qWarning() << "SecretsCredentialStore:" << op << "-- code" << (int)result.errorCode()
+                   << "message" << result.errorMessage();
+    }
 }
 
 }
@@ -67,19 +95,23 @@ SecretsCredentialStore::Outcome SecretsCredentialStore::store(const QVariantMap 
     req.startRequest();
     req.waitForFinished();
 
+    logIfNotSucceeded("store", req.result());
     return req.result().code() == Sailfish::Secrets::Result::Succeeded
             ? Outcome::Succeeded : Outcome::Failed;
 }
 
-SecretsCredentialStore::Outcome SecretsCredentialStore::load(QVariantMap *outFields)
+SecretsCredentialStore::Outcome SecretsCredentialStore::load(QVariantMap *outFields, bool allowInteraction)
 {
     Sailfish::Secrets::StoredSecretRequest req;
     req.setManager(m_manager.data());
     req.setIdentifier(identifierFor(m_secretName));
-    req.setUserInteractionMode(Sailfish::Secrets::SecretManager::PreventInteraction);
+    req.setUserInteractionMode(allowInteraction
+            ? Sailfish::Secrets::SecretManager::SystemInteraction
+            : Sailfish::Secrets::SecretManager::PreventInteraction);
     req.startRequest();
     req.waitForFinished();
 
+    logIfNotSucceeded("load", req.result());
     if (req.result().code() == Sailfish::Secrets::Result::Succeeded) {
         if (outFields) {
             *outFields = QJsonDocument::fromJson(req.secret().data()).object().toVariantMap();
@@ -87,7 +119,10 @@ SecretsCredentialStore::Outcome SecretsCredentialStore::load(QVariantMap *outFie
         return Outcome::Succeeded;
     }
 
-    return isNotFoundError(req.result().errorCode()) ? Outcome::NotFound : Outcome::Failed;
+    if (isNotFoundError(req.result().errorCode())) {
+        return Outcome::NotFound;
+    }
+    return isLockedError(req.result().errorCode()) ? Outcome::Locked : Outcome::Failed;
 }
 
 SecretsCredentialStore::Outcome SecretsCredentialStore::remove()
@@ -104,6 +139,7 @@ SecretsCredentialStore::Outcome SecretsCredentialStore::removeInternal()
     req.startRequest();
     req.waitForFinished();
 
+    logIfNotSucceeded("remove", req.result());
     if (req.result().code() == Sailfish::Secrets::Result::Succeeded) {
         return Outcome::Succeeded;
     }

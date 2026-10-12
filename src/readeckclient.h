@@ -176,12 +176,14 @@ private:
     void persistEndpoint();
     void persistCredential();
     void restoreSession();
+    void unlockSecretsInteractively();
     static QVariantMap credentialFields(const QString &username, const QString &token);
     void requestDeviceCode(const QString &endpoint);
     void finishLogin(const QString &endpoint, const QString &token);
 
     QNetworkAccessManager *m_manager;
     SecretsCredentialStore m_secretsStore;
+
     QString m_endpoint;
     QString m_token;
     QString m_username;

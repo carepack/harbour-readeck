@@ -1,6 +1,11 @@
 # Rename this file to harbour-readeck.changes to include it in the RPM.
 # Add newest entries at the top.
 
+* Mon Oct 12 2026 Contributor <contributor@example.com> 1.1.5-1
+- Fix: after a device restart, you had to log back in even though you were
+  already signed in -- it now unlocks your saved session automatically
+  once the device is unlocked, no action needed
+
 * Sat Oct 10 2026 Contributor <contributor@example.com> 1.1.4-1
 - Your login is now kept in Sailfish's own secure storage instead of a plain settings file. If you were already signed in, nothing to do -- it switches over by itself the next time you open the app.
 
