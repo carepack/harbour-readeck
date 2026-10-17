@@ -36,6 +36,41 @@ ApplicationWindow {
     property string pendingShareUrl: ""
     property string pendingShareTitle: ""
 
+    // Delivers a share/open link that was queued during login, strictly
+    // after the login-success signal's synchronous slot calls have all
+    // returned. LoginPage.qml listens to the same readeckClient
+    // loginSucceeded signal to replace itself with BookmarksPage; Qt
+    // calls connected slots in connection order, and this window's own
+    // Connections exists (and so connects) before LoginPage is even
+    // loaded, so without this deferral the two race -- the save dialog
+    // gets pushed first, then LoginPage's replace() clobbers it right
+    // back off the stack (confirmed live on-device). interval: 0 defers
+    // to the next event-loop pass, after every synchronous listener
+    // (including LoginPage's replace) has already run.
+    Timer {
+        id: pendingShareDeliveryTimer
+        interval: 0
+        property string url: ""
+        property string title: ""
+        onTriggered: appWindow.shareInto(url, title)
+    }
+
+    // Retries shareInto() shortly when the page stack hasn't finished
+    // loading its initialPage yet -- confirmed live: a D-Bus-delivered
+    // Open()/share call can be processed (isLoggedIn already true, no
+    // interactive unlock needed) before Silica's own initialPage has
+    // loaded, landing the push on an empty stack (pageStack.depth went
+    // to 1 from 0, not 2) where it then gets silently overwritten the
+    // moment initialPage actually loads. Polling is the only option --
+    // there's no public "page stack ready" signal to wait on instead.
+    Timer {
+        id: pageStackRetryTimer
+        interval: 50
+        property string url: ""
+        property string title: ""
+        onTriggered: appWindow.shareInto(url, title)
+    }
+
     // Called when a link was shared to the app (see src/sharereceiver.h
     // for why this is a hand-rolled D-Bus receiver in C++ rather than
     // the stock Sailfish.Share QML ShareProvider). AddBookmarkPage has
@@ -49,6 +84,21 @@ ApplicationWindow {
             pendingShareTitle = title
             return
         }
+        if (!shareReceiver.pageStackReady || pageStack.busy) {
+            // pageStackReady alone isn't enough -- it's set once the
+            // initial page reaches PageStatus.Active (Component.onCompleted
+            // fires too early, confirmed live: Silica's own "cannot push
+            // while transition is in progress" warning fired when a push
+            // raced that transition). busy guards every later transition
+            // too, e.g. LoginPage's own replace() to BookmarksPage on
+            // login success, which is a second, separate transition this
+            // push could just as easily race.
+            console.log("readeck share: page stack not ready yet, retrying")
+            pageStackRetryTimer.url = url
+            pageStackRetryTimer.title = title
+            pageStackRetryTimer.start()
+            return
+        }
         pageStack.push(Qt.resolvedUrl("pages/AddBookmarkPage.qml"), {
             initialUrl: url,
             initialTitle: title
@@ -60,10 +110,15 @@ ApplicationWindow {
         target: shareReceiver
         onBookmarkShared: {
             console.log("readeck share: QML onBookmarkShared received url=" + url + " title=" + title)
-            // A share can arrive while the app is behind something else.
+            // A share (or an opened link, routed through the same signal
+            // per KTD2) can arrive while the app is behind something else.
             appWindow.activate()
             appWindow.shareInto(url, title)
         }
+        // A plain org.freedesktop.Application Activate() call (e.g. a
+        // normal launch via the system once X-DBusActivatable=true is
+        // set, with no link to open) -- just raise the window.
+        onActivateRequested: appWindow.activate()
     }
 
     Connections {
@@ -79,11 +134,11 @@ ApplicationWindow {
             if (pendingShareUrl.length === 0) {
                 return
             }
-            var url = pendingShareUrl
-            var title = pendingShareTitle
+            pendingShareDeliveryTimer.url = pendingShareUrl
+            pendingShareDeliveryTimer.title = pendingShareTitle
             pendingShareUrl = ""
             pendingShareTitle = ""
-            shareInto(url, title)
+            pendingShareDeliveryTimer.start()
         }
     }
 

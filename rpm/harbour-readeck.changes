@@ -1,6 +1,14 @@
 # Rename this file to harbour-readeck.changes to include it in the RPM.
 # Add newest entries at the top.
 
+* Sat Oct 17 2026 Contributor <contributor@example.com> 1.1.6-1
+- Open links directly into Readeck from the system's "open with" menu
+  (e.g. after scanning a QR code with the Camera app) -- not just via Share
+- Fix: a link shared or opened while your device was still unlocking could
+  be lost instead of opening the save dialog
+- Fix: typed labels could be lost when using "Capture page in embedded
+  browser"
+
 * Mon Oct 12 2026 Contributor <contributor@example.com> 1.1.5-1
 - Fix: after a device restart, you had to log back in even though you were
   already signed in -- it now unlocks your saved session automatically

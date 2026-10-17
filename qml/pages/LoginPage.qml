@@ -9,6 +9,18 @@ Page {
     // 0.21 (no OAuth support) -- see readeckclient.h's startOAuthLogin().
     property bool useTokenFallback: false
 
+    // Tells shareReceiver (see src/sharereceiver.h) that Silica's own
+    // page stack has genuinely finished loading AND transitioning in its
+    // initial page -- Component.onCompleted fires too early (confirmed
+    // live: Silica's own "cannot push while transition is in progress"
+    // warning fired when a pending share/open push raced that
+    // transition). Only once Active is it safe to push AddBookmarkPage.
+    onStatusChanged: {
+        if (status === PageStatus.Active) {
+            shareReceiver.pageStackReady = true
+        }
+    }
+
     Connections {
         target: readeckClient
         onLoginSucceeded: pageStack.replace(Qt.resolvedUrl("BookmarksPage.qml"))

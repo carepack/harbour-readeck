@@ -1,7 +1,7 @@
 Name:       harbour-readeck
 
 Summary:    Read-it-later client for Readeck
-Version:    1.1.5
+Version:    1.1.6
 Release:    1
 License:    MIT
 URL:        https://github.com/carepack/harbour-readeck
