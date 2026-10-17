@@ -28,6 +28,14 @@ ApplicationWindow {
             : ""
     }
 
+    // Set while a share arrived before readeckClient.isLoggedIn became
+    // true -- e.g. a cold D-Bus-activated start where restoreSession()
+    // is still waiting on an interactive Secrets unlock. Consumed by
+    // onLoginSucceeded below once that resolves, instead of the share
+    // being silently lost.
+    property string pendingShareUrl: ""
+    property string pendingShareTitle: ""
+
     // Called when a link was shared to the app (see src/sharereceiver.h
     // for why this is a hand-rolled D-Bus receiver in C++ rather than
     // the stock Sailfish.Share QML ShareProvider). AddBookmarkPage has
@@ -36,7 +44,9 @@ ApplicationWindow {
     function shareInto(url, title) {
         console.log("readeck share: shareInto called url=" + url + " title=" + title)
         if (!readeckClient.isLoggedIn) {
-            console.log("readeck share: not logged in, ignoring")
+            console.log("readeck share: not logged in yet, queuing until login completes")
+            pendingShareUrl = url
+            pendingShareTitle = title
             return
         }
         pageStack.push(Qt.resolvedUrl("pages/AddBookmarkPage.qml"), {
@@ -56,11 +66,25 @@ ApplicationWindow {
         }
     }
 
-    // Opening the OAuth login URL lives in QML (Qt.openUrlExternally)
-    // rather than C++ QDesktopServices -- see readeckclient.h.
     Connections {
         target: readeckClient
+        // Opening the OAuth login URL lives in QML (Qt.openUrlExternally)
+        // rather than C++ QDesktopServices -- see readeckclient.h.
         onOauthLoginUrlReady: Qt.openUrlExternally(url)
+
+        // Fires on manual login and on a background Secrets unlock
+        // completing -- either way, deliver a share that arrived too
+        // early instead of leaving it stuck in pendingShareUrl forever.
+        onLoginSucceeded: {
+            if (pendingShareUrl.length === 0) {
+                return
+            }
+            var url = pendingShareUrl
+            var title = pendingShareTitle
+            pendingShareUrl = ""
+            pendingShareTitle = ""
+            shareInto(url, title)
+        }
     }
 
     Connections {
