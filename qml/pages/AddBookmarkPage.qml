@@ -77,6 +77,15 @@ Dialog {
                 anchors.horizontalCenter: parent.horizontalCenter
                 text: qsTr("Capture page in embedded browser")
                 onClicked: {
+                    // Saved and restored around the round trip below --
+                    // confirmed live that labelsField's typed text does
+                    // not survive the push to CaptureContentPage and
+                    // back, unlike urlField/titleField (which this
+                    // handler already overwrites anyway) -- re-asserting
+                    // it here is a safe fix regardless of the exact
+                    // cause.
+                    var savedLabels = labelsField.text
+
                     // CaptureContentPage.qml loads the URL in our own
                     // WebView (so the user can log in past a paywall if
                     // needed) and emits contentCaptured() with the
@@ -93,6 +102,7 @@ Dialog {
                         }
                         htmlField.text = html
                         provideHtmlSwitch.checked = true
+                        labelsField.text = savedLabels
                     })
                 }
             }
